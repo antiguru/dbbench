@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"flag"
@@ -36,7 +37,7 @@ func (s *sqlDb) RunQuery(w *SafeCSVWriter, q string, args []interface{}) (int64,
 
 	switch action := strings.ToLower(strings.Fields(q)[0]); action {
 	case "select", "show", "explain", "describe", "desc":
-		return s.countQueryRows(w, q, args)
+		return s.countExecRows(q, args)
 	case "use", "begin":
 		return 0, fmt.Errorf("invalid query action: %v", action)
 	default:
@@ -145,6 +146,7 @@ type sqlDatabaseFlavor struct {
 	errFunc   func(e error) (string, error)
 }
 
+var forcePreAuth = flag.Bool("force-pre-auth", false, "Force the creation and authorization of all idle connections outside the benchmar loop")
 var maxIdleConns = flag.Int("max-idle-conns", 100, "Maximum idle database connections")
 var maxActiveConns = flag.Int("max-active-conns", 0, "Maximum active database connections")
 
@@ -167,7 +169,6 @@ func (sq *sqlDatabaseFlavor) Connect(cc *ConnectionConfig) (Database, error) {
 	if err = db.Ping(); err != nil {
 		return nil, err
 	}
-	log.Println("Connected")
 
 	/*
 	 * Go very aggressively recycles connections; inform the runtime
@@ -185,6 +186,28 @@ func (sq *sqlDatabaseFlavor) Connect(cc *ConnectionConfig) (Database, error) {
 	 *         database/sql: Use all connections in pool
 	 */
 	db.SetMaxOpenConns(*maxActiveConns)
+
+	if *forcePreAuth {
+		fmt.Println("priming connections")
+
+		conns := make([]*sql.Conn, *maxIdleConns)
+		for i := 0; i < *maxIdleConns; i++ {
+			conn, err := db.Conn(context.Background())
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if _, err := conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
+				log.Fatal(err)
+			}
+
+			conns[i] = conn
+		}
+
+		for _, conn := range conns {
+			conn.Close()
+		}
+	}
 
 	return &sqlDb{db}, nil
 }
