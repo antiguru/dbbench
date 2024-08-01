@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/lib/pq"
@@ -188,25 +189,33 @@ func (sq *sqlDatabaseFlavor) Connect(cc *ConnectionConfig) (Database, error) {
 	db.SetMaxOpenConns(*maxActiveConns)
 
 	if *forcePreAuth {
-		fmt.Println("priming connections")
+		fmt.Println("primeing connections")
 
-		conns := make([]*sql.Conn, *maxIdleConns)
+		var wg1 sync.WaitGroup
+		wg1.Add(*maxIdleConns)
+
+		var wg2 sync.WaitGroup
+		wg2.Add(*maxIdleConns)
+
 		for i := 0; i < *maxIdleConns; i++ {
-			conn, err := db.Conn(context.Background())
-			if err != nil {
-				log.Fatal(err)
-			}
+			go func() {
+				defer wg2.Done()
+				conn, err := db.Conn(context.Background())
+				if err != nil {
+					log.Fatal(err)
+				}
 
-			if _, err := conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
-				log.Fatal(err)
-			}
+				if _, err := conn.ExecContext(context.Background(), "SELECT 1"); err != nil {
+					log.Fatal(err)
+				}
 
-			conns[i] = conn
+				wg1.Done()
+				wg1.Wait()
+				conn.Close()
+			}()
 		}
 
-		for _, conn := range conns {
-			conn.Close()
-		}
+		wg2.Wait()
 	}
 
 	return &sqlDb{db}, nil
