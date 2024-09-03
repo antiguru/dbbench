@@ -36,6 +36,7 @@ type queryInvocation struct {
 type jobInvocation struct {
 	name    string
 	queries []queryInvocation
+	time    time.Time
 }
 
 type Job struct {
@@ -70,7 +71,7 @@ func (ji *jobInvocation) Invoke(db Database, df DatabaseFlavor, results *SafeCSV
 	errorCounts := make(ErrorCounts)
 
 	for _, qi := range ji.queries {
-		runQueryStart := time.Now()
+		runQueryStart := ji.time
 		rows, err := db.RunQuery(results, qi.query, qi.args)
 		elapsed += time.Since(runQueryStart)
 
@@ -127,7 +128,7 @@ func (job *Job) getNextJobInvocation() (*jobInvocation, error) {
 		}
 		queryInvocations = append(queryInvocations, queryInvocation{query, args})
 	}
-	return &jobInvocation{job.Name, queryInvocations}, nil
+	return &jobInvocation{job.Name, queryInvocations, time.Now()}, nil
 }
 
 func (job *Job) startTickQueryChannel(ctx context.Context) <-chan *jobInvocation {
@@ -187,7 +188,7 @@ func (job *Job) startLogQueryChannel(ctx context.Context) <-chan *jobInvocation 
 					return
 				case <-time.NewTimer(timeToSleep).C:
 					// TODO(awreece) Support multi statement log files.
-					ch <- &jobInvocation{job.Name, []queryInvocation{{parts[1], nil}}}
+					ch <- &jobInvocation{job.Name, []queryInvocation{{parts[1], nil}}, time.Now()}
 				}
 			}
 		}
